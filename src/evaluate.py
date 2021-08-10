@@ -80,6 +80,8 @@ class Disentanglement_Evaluator(Evaluator, util.Seed, util.Switchable, util.Devi
 			output = output.loc
 		return output.detach().cpu().numpy()
 
+
+
 @fig.Component('metric/unsupervised')
 class UnsupervisedMetrics(Disentanglement_Evaluator):
 	def __init__(self, A, num_train=None, batch_size=None, **kwargs):
@@ -106,6 +108,8 @@ class UnsupervisedMetrics(Disentanglement_Evaluator):
 	def get_results(self):
 		return ['covariance_matrix']
 
+
+
 @fig.Component('metric/modularity-explicitness')
 class ModularityExplicitness(Disentanglement_Evaluator):
 	def __init__(self, A, num_train=None, num_test=None, batch_size=None, **kwargs):
@@ -131,6 +135,8 @@ class ModularityExplicitness(Disentanglement_Evaluator):
 	
 	def get_scores(self):
 		return ['modularity_score', 'explicitness_score_train', 'explicitness_score_test']
+
+
 
 @fig.Component('metric/sap')
 class SAP(Disentanglement_Evaluator):
@@ -165,6 +171,8 @@ class SAP(Disentanglement_Evaluator):
 	def get_results(self):
 		return ['SAP_matrix']
 
+
+
 @fig.Component('metric/irs')
 class IRS(Disentanglement_Evaluator):
 	def __init__(self, A, num_train=None, batch_size=None, diff_quantile=None, **kwargs):
@@ -193,6 +201,8 @@ class IRS(Disentanglement_Evaluator):
 	
 	def get_results(self):
 		return ['IRS_matrix', 'disentanglement_scores', 'parents', 'max_deviations']
+
+
 
 @fig.Component('metric/dci')
 class DCI(Disentanglement_Evaluator):
@@ -223,6 +233,8 @@ class DCI(Disentanglement_Evaluator):
 	def get_results(self):
 		return ['importance_matrix']
 
+
+
 @fig.Component('metric/mig')
 class MIG(Disentanglement_Evaluator):
 	def __init__(self, A, num_train=None, batch_size=None, **kwargs):
@@ -247,6 +259,8 @@ class MIG(Disentanglement_Evaluator):
 	
 	def get_results(self):
 		return ['entropy']
+
+
 
 @fig.Component('metric/factor-vae')
 class FactorVAE(Disentanglement_Evaluator):
@@ -278,6 +292,8 @@ class FactorVAE(Disentanglement_Evaluator):
 	def get_scores(self):
 		return ['train_accuracy', 'eval_accuracy', 'num_active_dims']
 
+
+
 @fig.Component('metric/beta-vae')
 class BetaVAE(Disentanglement_Evaluator):
 	def __init__(self, A, num_train=None, num_test=None, batch_size=None, **kwargs):
@@ -303,6 +319,8 @@ class BetaVAE(Disentanglement_Evaluator):
 	
 	def get_scores(self):
 		return ['train_accuracy', 'eval_accuracy']
+
+
 
 @fig.Component('metric/fairness')
 class Fairness(Disentanglement_Evaluator):
@@ -332,6 +350,7 @@ class Fairness(Disentanglement_Evaluator):
 	
 	def get_results(self):
 		return ['importance_matrix']
+
 
 
 @fig.Component('metric/structure')
@@ -411,6 +430,7 @@ class StructureScore(Disentanglement_Evaluator):
 	
 	def get_scores(self):
 		return ['structure_score']
+
 
 
 @fig.Component('metric/responses')
@@ -640,6 +660,7 @@ def eval_metrics(A, run=None, metrics=None, mode=None,
 	return scores, results
 
 
+
 @fig.Script('eval-multiple-metrics')
 def _eval_metrics(A, runs=None, dataset=unspecified_argument, metrics=unspecified_argument):
 	
@@ -692,6 +713,7 @@ def _eval_metrics(A, runs=None, dataset=unspecified_argument, metrics=unspecifie
 			#
 			# 	print(f'Running: {run.get_name()} ({i+1}/{len(runs)})')
 			# 	_eval_run(A, run=run, metrics=metrics)
+
 
 
 @fig.Script('eval-fix-hybrid')
