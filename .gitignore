@@ -6,6 +6,17 @@ __pycache__/
 # C extensions
 *.so
 
+
+local_data/
+.ipynb_checkpoints/
+.idea/
+trained_nets/
+old_trained_nets/
+foundation.egg-info/
+extra/
+figures/
+
+
 # Distribution / packaging
 .Python
 build/

@@ -1,0 +1,10 @@
+
+name: latresp
+#name: Structure by Architecture
+
+version: 0.1
+license: MIT
+
+#related: [foundation]
+
+package: src
