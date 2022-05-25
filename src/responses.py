@@ -1,11 +1,193 @@
-
+from typing import Union, Optional, TypeVar, Generic, Dict, List
 import omnifig as fig
+from tqdm import tqdm
 
+import numpy as np
 import torch
 from torch.utils.data import TensorDataset, DataLoader
 from torch import distributions as distrib
+from torch.utils.data import Dataset
 
 from omnilearn import util
+
+import tsalib
+B, C, H, W, D = tsalib.dim_vars('Batch(b) Channels(c) Height(h) Width(w) Latent(d)', exists_ok=True)
+Observation = B, C, H, W
+# Latent = (B,D)
+Latent = Union[torch.Tensor, distrib.Distribution] # B, D
+# Latent = torch.Tensor
+
+
+class Autoencoder:
+	def __init__(self, latent_dim, **kwargs):
+		super().__init__(**kwargs)
+		self.latent_dim = latent_dim
+
+	def sample(self, N: int = 1, gen: Optional[torch.Generator] = None) -> Observation:
+		return self.decode(self.sample_prior(N, gen=gen))
+
+	def sample_prior(self, N: int = 1, gen: Optional[torch.Generator] = None) -> Latent:
+		return torch.randn(N, self.latent_dim, generator=gen)
+
+	def encode(self, x: Observation) -> Latent:
+		raise NotImplementedError
+
+	def decode(self, z: Latent) -> Observation:
+		raise NotImplementedError
+
+	def reconstruct(self, x: Observation) -> Observation:
+		return self.decode(self.encode(x))
+
+	def response(self, z: Latent) -> Latent:
+		if isinstance(z, distrib.Distribution):
+			z = z.rsample()
+		return self.encode(self.decode(z))
+
+	def select_indices(self, N: int, num_samples: int, # selects N samples from num_samples
+	           force_different: bool = False, gen: torch.Generator = None) -> torch.Tensor:
+		if N < num_samples:
+			picks = torch.randint(num_samples, size=(N,), generator=gen)
+		else:
+			picks = torch.randperm(num_samples, generator=gen)[:N]
+			if force_different:
+				bad = torch.where(picks.sub(torch.arange(N)).eq(0))[0]
+				shifted = (bad + 1) % len(picks)
+				picks[bad], picks[shifted] = picks[shifted], picks[bad]
+		return picks
+
+	def intervene_(self, z: Latent, sel: Union[int, List[int]], # TODO: make this differentiable
+	              values: Union[Latent, torch.Tensor, float] = None,
+	              shuffle: bool = True, force_different: bool = False,
+	              gen: torch.Generator = None) -> Latent:
+		if isinstance(sel, int):
+			sel = [sel]
+
+		if values is None:
+			values = self.sample_prior(len(z), gen=gen)[:, sel]
+		else:
+			values = torch.as_tensor(values).to(z.device)
+			if len(values.size()) == 0:
+				values = values.expand(len(sel))
+			if len(values.size()) == 1:
+				values = values.unsqueeze(1)
+			if values.size(1) > len(sel):
+				assert values.size(1) == z.size(1), 'interventions should have the same dims as latent or len(sel)'
+				values = values[:, sel]
+			else:
+				values = values.expand(-1, len(sel))
+
+		assert shuffle or len(values) == len(z), \
+			f'should have an intervention for every sample: {len(values)} vs {len(z)}'
+		if shuffle:
+			values = values[self.select_indices(len(z), len(values), force_different=force_different, gen=gen)]
+
+		z[:, sel] = values
+		return z
+
+	def intervene(self, z: Latent, sel: Union[int, List[int]],
+	              values: Union[Latent, torch.Tensor, float] = None,
+	              gen: torch.Generator = None, **kwargs) -> Latent:
+		return self.intervene_(z.clone(), sel=sel, values=values, gen=gen, **kwargs)
+
+
+# def _response_mat()
+
+
+def response_mat(autoencoder: Autoencoder, samples: Optional[Latent] = None,
+                 interventions: Optional[Union[Dict[int,Latent],Latent]] = None,
+                 num_samples: Optional[int] = 100, force_different: bool = False,
+                 gen: Optional[torch.Generator] = None, pbar: Optional[tqdm] = None) -> torch.Tensor:
+	if interventions is None:
+		interventions = {}
+	elif isinstance(interventions, torch.Tensor):
+		interventions = {i: interventions[:, i] for i in range(interventions.size(1))}
+
+	rows = []
+	itr = range(autoencoder.latent_dim)
+	if pbar is not None:
+		itr = pbar(itr, total=autoencoder.latent_dim)
+	for j in itr:
+		if pbar is not None:
+			itr.set_description(f'Response matrix')
+		if num_samples is None:
+			z = samples
+		else:
+			z = autoencoder.sample_prior(num_samples, gen=gen) if samples is None \
+				else samples[autoencoder.select_indices(num_samples, len(samples),
+				                                        force_different=force_different, gen=gen)]
+		z_int = autoencoder.intervene(z, j, interventions.get(j), gen=gen)
+
+		s = autoencoder.response(z)
+		if isinstance(s, distrib.Distribution):
+			s = s.mean
+		s_int = autoencoder.response(z_int)
+		if isinstance(s, distrib.Distribution):
+			s_int = s_int.mean
+
+		rows.append( s_int.sub(s).pow(2).mean(0).sqrt() )
+	return torch.stack(rows)
+
+
+
+class FactorDataset(Dataset):
+	def __init__(self, factor_order: List[str], factor_sizes: Dict[str,int], **kwargs):
+		super().__init__(**kwargs)
+		self.factor_order = factor_order
+		self.factor_sizes = factor_sizes
+		self._factor_steps = torch.as_tensor(np.array([self.factor_sizes[f] for f in self.factor_order] + [1])
+		                                     [::-1].cumprod()[-2::-1].copy()).long()
+		self._factor_nums = torch.as_tensor([self.factor_sizes[f] for f in self.factor_order]).float().unsqueeze(0)
+
+		self.images = None
+
+
+	def images_given_index(self, inds):
+		return self.images[inds @ self._factor_steps]
+
+
+	def sample_inds(self, n=1, gen=None):
+		return torch.rand(n, 6, generator=gen).mul(self._factor_nums).long()
+
+
+	def factor_traversal_codes(self, factor, base=None, gen=None):
+		if base is None:
+			base = self.sample_inds(1, gen=gen)[0]
+		if isinstance(factor, int):
+			factor = self.factor_order[factor]
+
+		i = self.factor_order.index(factor)
+		v = torch.arange(self.factor_sizes[factor])
+
+		codes = base.unsqueeze(0).expand(v.size(0), -1).clone()
+		codes[:, i] = v
+		return codes
+
+
+	def factor_traversal_images(self, factor, base=None, gen=None):
+		codes = self.factor_traversal_codes(factor, base=base, gen=gen)
+		return self.images_given_index(codes)
+
+
+
+
+
+def conditioned_response_mat(autoencoder: Autoencoder, dataset: FactorDataset, num_traversals: int = 50,
+                             gen: Optional[torch.Generator] = None, pbar: Optional[tqdm] = None):
+
+
+	for factor in dataset.factor_order:
+		itr = range(num_traversals)
+		if pbar is not None:
+			itr = pbar(itr, total=num_traversals, desc=f'Factor {factor}')
+
+		for j in itr:
+			group = dataset.factor_traversal_images(factor, gen=gen)
+
+			mat = response_mat(autoencoder, samples=group, interventions=group, num_samples=len(group),
+
+
+
+	pass
 
 
 
