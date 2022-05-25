@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+3dshapes.h5
+
 # C extensions
 *.so
 
