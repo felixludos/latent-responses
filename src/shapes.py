@@ -28,8 +28,16 @@ class Shapes3D(FactorDataset):
 		with hf.File(self.path, 'r') as f:
 			images = f['images'][()]
 			labels = f['labels'][()]
-		self.images = torch.from_numpy(images).permute(0,3,1,2).float().div(255)
+		self.images = torch.from_numpy(images).permute(0,3,1,2)
 		self.labels = torch.from_numpy(labels)
+
+
+	def format_images(self, imgs):
+		return imgs.float().div(255)
+	
+	
+	def images_given_index(self, inds):
+		return self.format_images(super().images_given_index(inds))
 
 
 	_source_url = 'gs://3d-shapes/3dshapes.h5'
@@ -49,7 +57,7 @@ class Shapes3D(FactorDataset):
 
 
 	def __getitem__(self, item):
-		return self.images[item], self.labels[item]
+		return self.format_images(self.images[item]), self.labels[item]
 
 
 
