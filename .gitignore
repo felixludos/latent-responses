@@ -4,6 +4,8 @@ __pycache__/
 *$py.class
 
 3dshapes.h5
+model_b.pt
+model_c.pt
 
 # C extensions
 *.so

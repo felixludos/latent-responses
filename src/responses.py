@@ -1,5 +1,4 @@
 from typing import Union, Optional, TypeVar, Generic, Dict, List
-import omnifig as fig
 from tqdm import tqdm
 
 import numpy as np
@@ -8,43 +7,54 @@ from torch.utils.data import TensorDataset, DataLoader
 from torch import distributions as distrib
 from torch.utils.data import Dataset
 
-from omnilearn import util
-
-import tsalib
-B, C, H, W, D = tsalib.dim_vars('Batch(b) Channels(c) Height(h) Width(w) Latent(d)', exists_ok=True)
-Observation = B, C, H, W
-# Latent = (B,D)
+Observation = torch.Tensor # B, C, H, W
 Latent = Union[torch.Tensor, distrib.Distribution] # B, D
-# Latent = torch.Tensor
+
 
 
 class Autoencoder:
-	def __init__(self, latent_dim, **kwargs):
+	def __init__(self, latent_dim: int, **kwargs):
 		super().__init__(**kwargs)
 		self.latent_dim = latent_dim
+
 
 	def sample(self, N: int = 1, gen: Optional[torch.Generator] = None) -> Observation:
 		return self.decode(self.sample_prior(N, gen=gen))
 
+
 	def sample_prior(self, N: int = 1, gen: Optional[torch.Generator] = None) -> Latent:
 		return torch.randn(N, self.latent_dim, generator=gen)
+
 
 	def encode(self, x: Observation) -> Latent:
 		raise NotImplementedError
 
+
 	def decode(self, z: Latent) -> Observation:
 		raise NotImplementedError
 
+
 	def reconstruct(self, x: Observation) -> Observation:
 		return self.decode(self.encode(x))
+
 
 	def response(self, z: Latent) -> Latent:
 		if isinstance(z, distrib.Distribution):
 			z = z.rsample()
 		return self.encode(self.decode(z))
 
-	def select_indices(self, N: int, num_samples: int, # selects N samples from num_samples
-	           force_different: bool = False, gen: torch.Generator = None) -> torch.Tensor:
+
+	def select_indices(self, N: int, num_samples: int, force_different: bool = False,
+	                   gen: torch.Generator = None) -> torch.Tensor:
+		'''
+		Samples N indices [0, num_samples-1]. If N > num_samples, with replacement, otherwise without.
+
+		:param N: number of indices to sample
+		:param num_samples: max index + 1
+		:param force_different: force each index to be different than it's position in the list
+		:param gen: generator to use for sampling
+		:return: indices
+		'''
 		if N > num_samples:
 			picks = torch.randint(num_samples, size=(N,), generator=gen)
 		else:
@@ -55,10 +65,22 @@ class Autoencoder:
 				picks[bad], picks[shifted] = picks[shifted], picks[bad]
 		return picks
 
+
 	def intervene_(self, z: Latent, sel: Union[int, List[int]], # TODO: make this differentiable
 	              values: Union[Latent, torch.Tensor, float] = None,
 	              shuffle: bool = True, force_different: bool = False,
 	              gen: torch.Generator = None) -> Latent:
+		'''
+		Intervene in the latent samples z (in place) by replacing the selected indices with the given values.
+
+		:param z: initial latent samples
+		:param sel: which index/indices to intervene in
+		:param values: intervention options (sampled from prior if not provided)
+		:param shuffle: shuffle the intervention options
+		:param force_different: force the intervention to be a different index than the original sample
+		:param gen: generator to use for sampling
+		:return: inplace intervened samples
+		'''
 		if isinstance(sel, int):
 			sel = [sel]
 
@@ -85,13 +107,13 @@ class Autoencoder:
 		z[:, sel] = values
 		return z
 
+
 	def intervene(self, z: Latent, sel: Union[int, List[int]],
 	              values: Union[Latent, torch.Tensor, float] = None,
 	              gen: torch.Generator = None, **kwargs) -> Latent:
+		'''Same as intervene_ but not in place'''
 		return self.intervene_(z.clone(), sel=sel, values=values, gen=gen, **kwargs)
 
-
-# def _response_mat()
 
 
 def response_mat(autoencoder: Autoencoder, samples: Optional[Latent] = None,
@@ -99,6 +121,23 @@ def response_mat(autoencoder: Autoencoder, samples: Optional[Latent] = None,
                  num_samples: Optional[int] = 100, force_different: bool = False,
                  device: Optional[Union[torch.device,str]] = None, pbar: Optional[tqdm] = None,
                  gen: Optional[torch.Generator] = None, ) -> torch.Tensor:
+	'''
+	Compute the latent response matrix for the given autoencoder. Rows correspond to the latent dimension that is
+	intervened, while values (generally in [0, 1]) are the average response in the latent dimension
+	corresponding to the column.
+
+	:param autoencoder: needed for encoding and decoding, interventions, and sampling (from the prior)
+	:param samples: unintervened latent samples to start from (uses prior samples if not provided)
+	:param interventions: intervention options for each latent dimension (uses prior samples if not provided)
+	:param num_samples: number of samples to use (sampled from `samples` or prior)
+	(defaults to `samples` if not provided)
+	:param force_different: force the interventions to be from a different index than the original samples
+	(only has an effect if both samples and interventions are provided)
+	:param device: device to use for the computation
+	:param pbar: optional progress bar
+	:param gen: generator to use for sampling
+	:return: (latent_dim, latent_dim) response matrix
+	'''
 	if interventions is None:
 		interventions = {}
 	elif isinstance(interventions, torch.Tensor):
@@ -159,15 +198,38 @@ class FactorDataset(Dataset):
 		self.images = None
 
 
-	def images_given_index(self, inds):
+	def images_given_index(self, inds: torch.Tensor) -> torch.Tensor:
+		'''
+		Load the image(s) corresponding to the given label index(es)
+
+		:param inds: (N, 6) tensor of label indices
+		:return: corresponding images
+		'''
 		return self.images[inds @ self._factor_steps]
 
 
-	def sample_inds(self, n=1, gen=None):
+	def sample_inds(self, n: int = 1, gen: Optional[torch.Generator] = None) -> torch.Tensor:
+		'''
+		Sample `n` indices from the dataset
+
+		:param n: number of samples
+		:param gen: generator to use for sampling
+		:return: (n, 6) tensor of label indices
+		'''
 		return torch.rand(n, 6, generator=gen).mul(self._factor_nums).long()
 
 
-	def factor_traversal_codes(self, factor, base=None, gen=None):
+	def factor_traversal_codes(self, factor: Union[str, int], base: Optional[torch.Tensor] = None,
+	                           gen: Optional[torch.Generator] = None):
+		'''
+		Generate a sequence of codes corresponding to a traversal for the given `factor` while all other factors are
+		fixed (specified by `base`, or sampled uniformly)
+
+		:param factor: factor to traverse
+		:param base: other factors to use as a base (defaults to sampled uniformly), tensor shape (6)
+		:param gen: generator to use for sampling
+		:return: (k, 6) tensor of label indices corresponding to the traversal
+		'''
 		if base is None:
 			base = self.sample_inds(1, gen=gen)[0]
 		if isinstance(factor, int):
@@ -181,17 +243,39 @@ class FactorDataset(Dataset):
 		return codes
 
 
-	def factor_traversal_images(self, factor, base=None, gen=None):
+	def factor_traversal_images(self, factor: Union[str, int], base: Optional[torch.Tensor] = None,
+	                           gen: Optional[torch.Generator] = None):
+		'''
+		Generate a sequence of images corresponding to a traversal for the given `factor` while all other factors are
+		fixed (specified by `base`, or sampled uniformly)
+		:param factor: factor to traverse
+		:param base: other factors to use as a base (defaults to sampled uniformly), tensor shape (6)
+		:param gen: generator to use for sampling
+		:return: (k, 3, 64, 64) tensor of images corresponding to the traversal
+		'''
 		codes = self.factor_traversal_codes(factor, base=base, gen=gen)
 		return self.images_given_index(codes)
 
 
 
-
-
 def conditioned_response_mat(autoencoder: Autoencoder, dataset: FactorDataset, num_traversals: int = 50,
-                             batch_size: int = 32, reduction='mean', device: Optional[Union[torch.device,str]] = None,
-                             gen: Optional[torch.Generator] = None, pbar: Optional[tqdm] = None):
+                             batch_size: int = 32, reduction: Optional[Union[str, None]] = 'mean',
+                             device: Optional[Union[torch.device,str]] = None, pbar: Optional[tqdm] = None,
+                             gen: Optional[torch.Generator] = None):
+	'''
+	Compute the response matrix for a given dataset, conditioned on the traversal of a given factor
+
+	:param autoencoder: needed for encoding and decoding, interventions, and sampling (from the prior)
+	:param dataset: must enable traversing a single true factor at a time (see FactorDataset)
+	:param num_traversals: number of traversals to use for each factor (recommended to be at least 10)
+	:param batch_size: number of interventions to use for each traversal (recommended to be at least 32)
+	:param reduction: reduction to apply along the number of traversals (defaults to mean)
+	:param device: device to use for tensors
+	:param gen: generator to use for sampling
+	:param pbar: optional progress bar to use
+	:return: (num_factors, num_traversals, latent_dim) conditioned response matrix if reduction is None,
+	otherwise (num_factors, latent_dim)
+	'''
 
 	rows = []
 	for factor in dataset.factor_order:
@@ -216,238 +300,21 @@ def conditioned_response_mat(autoencoder: Autoencoder, dataset: FactorDataset, n
 		rows = rows.mean(1)
 	return rows
 
-def score_from_conditioned_response_mat(cond_mat):
+
+
+def score_from_conditioned_response_mat(cond_mat: torch.Tensor) -> float:
+	'''Aggregates the conditioned response matrix into a scalar score -> Causal Disentanglement Score'''
 	return cond_mat.max(0)[0].sum().div(cond_mat.sum()).item()
+
 
 
 def causal_disentanglement_score(autoencoder: Autoencoder, dataset: FactorDataset, num_traversals: int = 50,
                                  device: Optional[Union[torch.device,str]] = None, **kwargs):
+	'''Computes the Causal Disentanglement Score by first computing the conditioned response matrix'''
 	cond_mat = conditioned_response_mat(autoencoder, dataset, num_traversals=num_traversals, device=device, **kwargs)
 	return score_from_conditioned_response_mat(cond_mat)
 
 
-# from full interventions
-
-def sample_full_interventions(sampler, num_groups=50, device='cuda', pbar=None):
-	
-	D = len(sampler)
-	
-	factors = []
-	
-	itr = range(D)
-	if pbar is not None:
-		itr = pbar(itr, total=D)
-		itr.set_description('Sampling interventions')
-	else:
-		print('Sampling interventions')
-	for idx in itr:
-		groups = [sampler.full_intervention(idx) for _ in range(num_groups)]
-	
-		full = torch.stack(groups).to(device)
-		
-		factors.append(full)
-	
-	return factors
-
-
-# def response_mat(Q, encode, decode, n_interv=None, scales=None,
-#                  force_different=False,
-#                  max_batch_size=None, device=None):
-# 	if scales is not None:
-# 		raise NotImplementedError
-#
-# 	@torch.no_grad()
-# 	def response_function(q):
-# 		if device is not None:
-# 			q = q.to(device)
-# 		r = encode(decode(q))
-# 		if isinstance(r, distrib.Normal):
-# 			r = r.loc
-# 		return r
-#
-# 	B, D = Q.shape
-#
-# 	if n_interv is None:
-# 		n_interv = B
-# 	if max_batch_size is None:
-# 		max_batch_size = n_interv
-#
-# 	resps = []
-# 	for i, qi in enumerate(Q.t()):  # Opy(D) (n_interv is parallelized)
-# 		order = torch.randperm(B)
-# 		iorder = order.clone()
-# 		if force_different:
-# 			iorder[1:] = order[:-1]
-# 			iorder[0] = order[-1]
-# 		qsel = slice(0,n_interv) if force_different else torch.randint(B, size=(n_interv,))
-# 		isel = slice(0,n_interv) if force_different else torch.randint(B, size=(n_interv,))
-# 		q = Q[order[qsel]]
-# 		dq = q.clone()
-# 		dq[:, i] = qi[iorder[isel]]
-# 		z = util.process_in_batches(response_function, q, batch_size=max_batch_size)
-# 		dz = util.process_in_batches(response_function, dq, batch_size=max_batch_size)
-# 		resps.append(dz.sub(z).pow(2).mean(0).sqrt())
-# 	return torch.stack(resps)
-
-
-# def conditioned_reponses(encode, decode, factor_samples, resp_kwargs={}, include_q=False,
-# 					pbar=None, factor_names=None):
-# 	'''
-# 	:param encode:
-# 	:param decode:
-# 	:param factor_samples: list with K elements (one for each factor of variation), each element hast
-# 	N sets of full interventions
-# 	:param resp_kwargs:
-# 	:param include_q:
-# 	:param pbar:
-# 	:param factor_names:
-# 	:return:
-# 	'''
-#
-# 	Fs = []
-# 	allQs = [] if include_q else None
-#
-# 	def _encode(x):
-# 		q = encode(x)
-# 		if isinstance(q, util.Distribution):
-# 			q = q.bsample()
-# 		return q
-#
-# 	for i, groups in enumerate(factor_samples):
-#
-# 		N, G, C, *other = groups.size()
-#
-# 		with torch.no_grad():
-#
-# 			Q = util.process_in_batches(_encode, groups.view(N*G, C, *other), batch_size=64)
-# 			# Q = encode(groups.view(N*G, C, *other))
-# 			# if isinstance(Q, util.Distribution):
-# 			# 	Q = Q.bsample()
-# 			Qs = Q.view(N, G, -1)
-# 			if allQs is not None:
-# 				allQs.append(Qs)
-#
-# 			Ms = []
-#
-# 			todo = zip(groups, Qs)
-# 			if pbar is not None:
-# 				todo = pbar(todo, total=len(groups))
-# 				if factor_names is not None:
-# 					todo.set_description(factor_names[i])
-#
-# 			for group, q in todo:
-# 				Ms.append(response_mat(q, encode, decode, force_different=True, **resp_kwargs).cpu())
-#
-# 		Fs.append(torch.stack(Ms))
-#
-# 	out = [torch.stack(Fs)]
-# 	if include_q:
-# 		out.append(allQs)
-# 	return out
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#
-# def compute_response(Q, encode, decode, include_q2=False, mag=None,
-#                      force_different=False, skip_shuffle=False):
-# 	N, D = Q.size()
-#
-# 	hyb = []
-# 	resp = []
-#
-# 	q2s = None
-# 	Q2 = [] if include_q2 else None
-#
-# 	if force_different and not skip_shuffle:
-# 		Q = Q[torch.randperm(len(Q))]
-#
-# 	if mag is not None and isinstance(mag, (int, float)):
-# 		mag = [mag] * D
-#
-# 	for idx in range(D):
-#
-# 		V = Q[:, idx]
-# 		if mag is not None:
-# 			m = mag[idx]
-# 			U = V + m * (-1) ** torch.randint(2, size=(len(V),), device=V.device)
-# 		elif force_different:
-# 			U = V.clone()
-# 			U[:-1] = V[1:]
-# 			U[-1] = V[0]
-# 		else:
-# 			U = V[torch.randperm(len(V))]
-# 		loader = DataLoader(TensorDataset(Q, U), batch_size=100, drop_last=False)
-#
-# 		H, Y = [], []
-#
-# 		for q, u in loader:
-#
-# 			with torch.no_grad():
-# 				h = q.clone()
-# 				h[:, idx] = u
-#
-# 				H.append(h)
-# 				y = encode(decode(h))
-# 				if isinstance(y, distrib.Distribution):
-# 					y = y.loc
-# 				Y.append(y)
-#
-# 				if Q2 is not None:
-# 					q2 = encode(decode(q))
-# 					if isinstance(q2, distrib.Distribution):
-# 						q2 = q2.loc
-# 					Q2.append(q2)
-#
-# 		hyb.append(torch.cat(H))
-# 		resp.append(torch.cat(Y))
-#
-# 		if Q2 is not None:
-# 			q2s = torch.cat(Q2)
-# 			Q2 = None
-#
-# 	out = [torch.stack(hyb), torch.stack(resp)]
-# 	if q2s is not None:
-# 		out.append(q2s)
-#
-# 	return out
-#
-#
-# def response_mat(Q, encode, decode, scales=None, dist_type='rms', mag=None, **resp_kwargs):
-# 	if isinstance(mag, (float, int)) and scales is not None:
-# 		mag = mag * scales
-#
-# 	H, Y, Q2 = compute_response(Q, encode, decode, include_q2=True, mag=mag, **resp_kwargs)
-#
-# 	R = Y - Q2.unsqueeze(0)
-#
-# 	if scales is not None:
-# 		R /= scales.view(1, 1, -1)
-#
-# 	if dist_type == 'rms':
-# 		R = R.pow(2).mean(1).sqrt()
-# 	elif dist_type == 'sqr':
-# 		R = R.pow(2).mean(1)
-# 	elif dist_type == 'abs':
-# 		R = R.abs().mean(1)
-# 	elif dist_type == 'l1':
-# 		R = R.abs().sum(1)
-# 	elif dist_type == 'l2':
-# 		R = R.pow(2).sum(1).sqrt()
-#
-# 	return R
-#
 
 
 
