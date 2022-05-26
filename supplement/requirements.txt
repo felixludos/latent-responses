@@ -1,0 +1,6 @@
+numpy
+torch
+matplotlib
+jupyter
+gsutil
+h5py
