@@ -97,8 +97,6 @@ def calc_tiling(N, H=None, W=None, prefer_tall=False):
 	if H > W or prefer_tall:
 		H, W = W, H
 
-	# if not prefer_tall:
-	# 	H,W = W,H
 	return H, W
 
 
@@ -121,8 +119,6 @@ def plot_imgs(imgs, H=None, W=None,
 		if channel_first is None \
 				and shape[0 if len(shape) == 3 else 1] in {1, 3, 4} and shape[-1] not in {1, 3, 4}:
 			channel_first = True
-
-		# print(channel_first, shape)
 
 		if len(shape) == 2 or (len(shape) == 3 and ((shape[0] in {1, 3, 4} and channel_first)
 		                                            or (shape[-1] in {1, 3, 4} and not channel_first))):
@@ -157,7 +153,7 @@ def plot_imgs(imgs, H=None, W=None,
 		if reverse_rows:
 			img = img[::-1]
 		plt.imshow(img, **params)
-		if grdlines:  # TODO: automate to allow more fine grain gridlines
+		if grdlines:
 			plt.plot([0, iW], [iH / 2, iH / 2], c='r', lw=.5, ls='--')
 			plt.plot([iW / 2, iW / 2], [0, iH], c='r', lw=.5, ls='--')
 			plt.xlim(0, iW)
@@ -165,15 +161,6 @@ def plot_imgs(imgs, H=None, W=None,
 
 		plt.axis('off')
 
-	# if title is not None:
-	# 	plt.xticks([])
-	# 	plt.yticks([])
-	# 	plt.title(title)
-	# else:
-	# 	plt.axis('off')
-
-	# if hastitles and not len(adjust):
-	# 	plt.tight_layout()
 	if adjust is not None:
 
 		base = dict(wspace=between, hspace=between,
